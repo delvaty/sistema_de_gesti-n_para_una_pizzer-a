@@ -12,7 +12,7 @@ export default function SignUp() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('user');
+  const [role, setRole] = useState('user'); // default 'user'
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -38,18 +38,16 @@ export default function SignUp() {
         options: {
           data: {
             full_name: fullName,
-            role: role,
+            role: role, // seguirá enviándose, pero deberías reforzar en servidor que role resultante sea 'user'
           },
         },
       });
 
       if (error) throw error;
-      
-      // Si el registro requiere confirmación por correo, el usuario no tendrá sesión.
+
       if (!data.session) {
         setMessage('¡Registro exitoso! Revisa tu correo para verificar tu cuenta.');
       }
-      // Si la sesión se crea inmediatamente, el useEffect se encargará de redirigir.
 
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -108,6 +106,8 @@ export default function SignUp() {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+
+            {/* SELECT: solo Cliente y Repartidor. no hay opción 'admin' */}
             <div>
               <Select onValueChange={setRole} defaultValue={role}>
                 <SelectTrigger>
@@ -116,7 +116,7 @@ export default function SignUp() {
                 <SelectContent>
                   <SelectItem value="user">Cliente</SelectItem>
                   <SelectItem value="driver">Repartidor</SelectItem>
-                  <SelectItem value="admin">Administrador</SelectItem>
+                  {/* Admin eliminado */}
                 </SelectContent>
               </Select>
             </div>
