@@ -14,6 +14,9 @@ type OrderItemRow = Database['public']['Tables']['order_items']['Row'];
 type OrderItemAddonRow = Database['public']['Tables']['order_item_addons']['Row'];
 type AddonRow = Database['public']['Tables']['addons']['Row'];
 
+/** Local type que extiende PizzaRow para incluir stock (evita errores TS si tu types generado no tiene stock aún) */
+type PizzaWithStock = PizzaRow & { stock: number };
+
 /** Estructura para detalle de items que muestra la UI */
 type OrderItemDetail = {
   id: string;
@@ -32,14 +35,15 @@ export default function AdminPizzas() {
   }, [isAuthenticated, loading, navigate]);
 
   // --- PIZZAS ---
-  const [pizzas, setPizzas] = useState<PizzaRow[]>([]);
+  const [pizzas, setPizzas] = useState<PizzaWithStock[]>([]);
   const [loadingPizzas, setLoadingPizzas] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<PizzaRow | null>(null);
+  const [editing, setEditing] = useState<PizzaWithStock | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('0.00');
   const [imageUrl, setImageUrl] = useState('');
+  const [stock, setStock] = useState('0'); // nuevo estado para stock como string para input
 
   // --- PEDIDOS ---
   const [orders, setOrders] = useState<OrderRow[]>([]);
@@ -56,15 +60,19 @@ export default function AdminPizzas() {
     try {
       const { data, error } = await supabase
         .from('pizzas')
-        .select('id,name,description,price,image_url,created_at')
+        // incluir stock en la consulta
+        .select('id,name,description,price,image_url,stock,created_at')
         .order('created_at', { ascending: false });
       if (error) throw error;
-      const rows: PizzaRow[] = (data ?? []).map((r: any) => ({
+
+      // mapear a PizzaWithStock forzado a partir del resultado (r puede venir string/number según DB driver)
+      const rows: PizzaWithStock[] = (data ?? []).map((r: any) => ({
         id: r.id,
         name: r.name,
         description: r.description ?? null,
         price: typeof r.price === 'number' ? r.price : parseFloat(r.price ?? 0),
         image_url: r.image_url ?? null,
+        stock: typeof r.stock === 'number' ? r.stock : parseInt(r.stock ?? '0', 10),
         created_at: r.created_at ?? undefined,
       }));
       setPizzas(rows);
@@ -112,14 +120,16 @@ export default function AdminPizzas() {
     setDescription('');
     setPrice('0.00');
     setImageUrl('');
+    setStock('0');
   };
 
-  const prepareEdit = (p: PizzaRow) => {
+  const prepareEdit = (p: PizzaWithStock) => {
     setEditing(p);
     setName(p.name);
     setDescription(p.description ?? '');
     setPrice((p.price ?? 0).toFixed(2));
     setImageUrl(p.image_url ?? '');
+    setStock(String(p.stock ?? 0));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -134,27 +144,46 @@ export default function AdminPizzas() {
       setError('Introduce un precio válido.');
       return;
     }
+    const parsedStock = parseInt(stock ?? '0', 10);
+    if (!Number.isInteger(parsedStock) || parsedStock < 0) {
+      setError('Introduce un stock válido (entero >= 0).');
+      return;
+    }
     setError(null);
 
     try {
       if (editing) {
         const { data, error } = await supabase
           .from('pizzas')
-          .update({ name: name.trim(), description: description.trim(), price: parsedPrice, image_url: imageUrl || null })
+          .update({
+            name: name.trim(),
+            description: description.trim(),
+            price: parsedPrice,
+            image_url: imageUrl || null,
+            stock: parsedStock,
+          })
           .eq('id', editing.id)
           .select()
           .single();
         if (error) throw error;
-        setPizzas((prev) => prev.map((p) => (p.id === data.id ? data : p)));
+        const updated = data as unknown as PizzaWithStock;
+        setPizzas((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
         setEditing(null);
       } else {
         const { data, error } = await supabase
           .from('pizzas')
-          .insert({ name: name.trim(), description: description.trim(), price: parsedPrice, image_url: imageUrl || null })
+          .insert({
+            name: name.trim(),
+            description: description.trim(),
+            price: parsedPrice,
+            image_url: imageUrl || null,
+            stock: parsedStock,
+          })
           .select()
           .single();
         if (error) throw error;
-        setPizzas((prev) => [data, ...prev]);
+        const created = data as unknown as PizzaWithStock;
+        setPizzas((prev) => [created, ...prev]);
         prepareCreate();
       }
     } catch (err: any) {
@@ -182,16 +211,7 @@ export default function AdminPizzas() {
       const { data, error } = await supabase
         .from('order_items')
         .select(
-          `
-          id,
-          quantity,
-          unit_price,
-          pizzas ( id, name, image_url ),
-          order_item_addons (
-            id,
-            addons ( id, name, price )
-          )
-        `
+          `id, quantity, unit_price, pizzas ( id, name, image_url ), order_item_addons ( id, addons ( id, name, price ) )`
         )
         .eq('order_id', orderId);
       if (error) throw error;
@@ -214,17 +234,72 @@ export default function AdminPizzas() {
     }
   };
 
+  /**
+   * Actualiza el estado del pedido.
+   * - Si el nuevo estado es 'completed' llama a la RPC complete_order (descuenta stock).
+   * - Si el pedido estaba en 'completed' y se cambia a otro estado, se intenta restockear con restock_order.
+   * - En otros casos se hace una update normal.
+   *
+   * Nota: se usa un cast a `any` en supabase.rpc(...) para evitar error de tipos si tus types generados no
+   * incluyen todavía estas funciones. Recomendado: regenerar src/types/supabase.ts para que incluya las RPCs.
+   */
   const updateOrderStatus = async (orderId: string) => {
     const newStatus = editingStatusFor[orderId];
     if (!newStatus) return;
     setProcessingOrderId(orderId);
+    setError(null);
+
+    // obtener estado previo desde el state orders
+    const prev = orders.find((o) => o.id === orderId);
+    const prevStatus = prev?.status ?? null;
+
     try {
-      const { error } = await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
-      if (error) throw error;
-      setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
+      // Si el admin pidió marcar como 'completed', llamamos a la RPC (la función DB hará validaciones y update)
+      if (newStatus === 'completed') {
+        // cast a any para evitar error TS si la RPC no existe en los tipos generados
+        const { data, error } = await supabase.rpc('complete_order' as any, { p_order_id: orderId });
+        if (error) {
+          // Mapear error de stock a UI
+          console.error('complete_order rpc error', error);
+          if (
+            error.message?.toLowerCase().includes('stock insuficiente') ||
+            error.message?.toLowerCase().includes('insuficiente')
+          ) {
+            setError('Stock insuficiente para completar el pedido. Revisa inventario.');
+            // dejar el select en el estado previo
+            setEditingStatusFor((prevMap) => ({ ...prevMap, [orderId]: prevStatus ?? 'pending' }));
+            return;
+          }
+          // otros errores
+          throw error;
+        }
+        // RPC exitosa - completar el estado en UI con el estado que la función DB estableció (asumimos 'completed')
+        setOrders((prevOrders) => prevOrders.map((o) => (o.id === orderId ? { ...o, status: 'completed' } : o)));
+        setEditingStatusFor((prevMap) => ({ ...prevMap, [orderId]: 'completed' }));
+      } else if (prevStatus === 'completed' && newStatus !== 'completed') {
+        // Si estaba completado y ahora lo cambian (ej. a cancelled), intentamos restockear
+        const { data, error } = await supabase.rpc('restock_order' as any, { p_order_id: orderId });
+        if (error) {
+          console.error('restock_order rpc error', error);
+          // si la función dice que no se puede restockear, mostrar detalle y no cambiar estado en UI
+          setError(error.message || 'No se pudo restockear el pedido.');
+          setEditingStatusFor((prevMap) => ({ ...prevMap, [orderId]: prevStatus ?? 'completed' }));
+          return;
+        }
+        // restock ok - restock_order función en DB ya pone estado 'cancelled' según implementación
+        setOrders((prevOrders) => prevOrders.map((o) => (o.id === orderId ? { ...o, status: 'cancelled' } : o)));
+        setEditingStatusFor((prevMap) => ({ ...prevMap, [orderId]: 'cancelled' }));
+      } else {
+        // Caso normal: update simple del status (no impacto en stock)
+        const { error } = await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
+        if (error) throw error;
+        setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o)));
+      }
     } catch (err: any) {
       console.error('updateOrderStatus error', err);
-      setError('No se pudo actualizar el estado del pedido.');
+      setError(err?.message || 'No se pudo actualizar el estado del pedido.');
+      // revertir select al estado anterior para evitar confusión visual
+      setEditingStatusFor((prevMap) => ({ ...prevMap, [orderId]: prevStatus ?? 'pending' }));
     } finally {
       setProcessingOrderId(null);
     }
@@ -294,15 +369,27 @@ export default function AdminPizzas() {
             </div>
           </div>
 
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium">Stock</label>
+              <Input
+                type="number"
+                value={stock}
+                onChange={(e) => setStock(e.target.value)}
+                min={0}
+                required
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium">URL de imagen (opcional)</label>
+              <Input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
+            </div>
+          </div>
+
           <div>
             <label className="mb-1 block text-sm font-medium">Descripción</label>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)}
               className="w-full rounded-md border border-border bg-background p-2 text-sm" rows={3} />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium">URL de imagen (opcional)</label>
-            <Input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
           </div>
 
           <div className="flex items-center gap-2">
@@ -333,6 +420,7 @@ export default function AdminPizzas() {
                   <div>
                     <div className="font-medium">{p.name}</div>
                     <div className="text-sm text-text-secondary">{p.description}</div>
+                    <div className="text-sm text-text-secondary">Stock: {String(p.stock ?? 0)}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -383,10 +471,11 @@ export default function AdminPizzas() {
                         <option value="accepted">accepted</option>
                         <option value="in_transit">in_transit</option>
                         <option value="delivered">delivered</option>
+                        <option value="completed">completed</option> {/* opción para disparar la RPC */}
                         <option value="cancelled">cancelled</option>
                       </select>
                       <Button size="sm" onClick={() => updateOrderStatus(o.id)} disabled={processingOrderId === o.id}>
-                        Guardar
+                        {processingOrderId === o.id ? 'Procesando...' : 'Guardar'}
                       </Button>
                     </div>
 
