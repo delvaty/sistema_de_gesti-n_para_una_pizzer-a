@@ -3,11 +3,13 @@ import Layout from './components/Layout';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import SignUp from './pages/SignUp';
-import Cart from './pages/Cart';
+
 import Orders from './pages/Orders';
 import AdminPizzas from './pages/AdminPizzas';
 import DriverPanel from './pages/DriverPanel';
 import ProtectedRoute from './components/ProtectedRoute';
+import Cart from './pages/Cart';
+/* import { Cart } from './pages/Cart'; */
 
 function App() {
   return (
