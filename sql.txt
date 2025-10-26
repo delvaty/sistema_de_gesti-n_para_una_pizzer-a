@@ -1,0 +1,67 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.addons (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  price numeric NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT addons_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.order_item_addons (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  order_item_id uuid NOT NULL,
+  addon_id uuid NOT NULL,
+  CONSTRAINT order_item_addons_pkey PRIMARY KEY (id),
+  CONSTRAINT order_item_addons_order_item_id_fkey FOREIGN KEY (order_item_id) REFERENCES public.order_items(id),
+  CONSTRAINT order_item_addons_addon_id_fkey FOREIGN KEY (addon_id) REFERENCES public.addons(id)
+);
+CREATE TABLE public.order_items (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  order_id uuid NOT NULL,
+  pizza_id uuid NOT NULL,
+  quantity integer NOT NULL,
+  unit_price numeric NOT NULL,
+  CONSTRAINT order_items_pkey PRIMARY KEY (id),
+  CONSTRAINT order_items_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders(id),
+  CONSTRAINT order_items_pizza_id_fkey FOREIGN KEY (pizza_id) REFERENCES public.pizzas(id)
+);
+CREATE TABLE public.orders (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid,
+  delivery_address text NOT NULL,
+  delivery_time timestamp with time zone NOT NULL,
+  total_price numeric NOT NULL,
+  status text NOT NULL DEFAULT 'pending'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT orders_pkey PRIMARY KEY (id),
+  CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.pizzas (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  description text,
+  price numeric NOT NULL,
+  image_url text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  stock integer NOT NULL DEFAULT 0,
+  image_path text,
+  CONSTRAINT pizzas_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.profiles (
+  id uuid NOT NULL,
+  full_name text,
+  role text NOT NULL DEFAULT 'user'::text,
+  CONSTRAINT profiles_pkey PRIMARY KEY (id),
+  CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.stock_movements (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  pizza_id uuid NOT NULL,
+  change integer NOT NULL,
+  reason text NOT NULL,
+  ref_order_id uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT stock_movements_pkey PRIMARY KEY (id),
+  CONSTRAINT stock_movements_pizza_id_fkey FOREIGN KEY (pizza_id) REFERENCES public.pizzas(id)
+);
