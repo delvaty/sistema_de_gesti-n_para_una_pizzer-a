@@ -46,7 +46,7 @@ export default function PizzaCard({ pizza }: PizzaCardProps) {
               }`}
               title={`${stock} disponibles`}
             >
-              Stock: {stock}
+              Disponible: {stock}
             </span>
           )}
         </div>

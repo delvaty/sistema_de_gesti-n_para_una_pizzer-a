@@ -36,7 +36,7 @@ export default function Header() {
           {/* Si es admin, mostramos botón a la administración */}
           {profile?.role === 'admin' && (
             <Button asChild variant="outline" size="sm" className="mr-2 hidden sm:inline-flex">
-              <Link to="/admin/pizzas">Admin Pizzas</Link>
+              <Link to="/admin/pizzas">Administrador Pizzas</Link>
             </Button>
           )}
 
@@ -45,7 +45,7 @@ export default function Header() {
             <Button asChild variant="outline" size="sm" className="mr-2 hidden sm:inline-flex">
               <Link to="/driver" className="flex items-center gap-2">
                 <Truck className="h-4 w-4" />
-                <span>Driver Panel</span>
+                <span>Panel de Repartidor</span>
               </Link>
             </Button>
           )}
