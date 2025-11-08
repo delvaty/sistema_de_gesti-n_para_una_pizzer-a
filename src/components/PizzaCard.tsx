@@ -4,21 +4,33 @@ import { Plus } from 'lucide-react';
 import { useCartStore } from '../store/cartStore';
 
 interface PizzaCardProps {
-  pizza: PizzaType;
+  pizza: PizzaType & { stock?: number }; // ← Asegurar que stock está incluido
 }
 
 export default function PizzaCard({ pizza }: PizzaCardProps) {
   const addItem = useCartStore((state) => state.addItem);
+  const items = useCartStore((state) => state.items);
 
-  // Asegurarnos de leer stock de forma segura (por si el tipo no lo define)
-  const stockRaw = (pizza as any).stock ?? 0;
-  const stock = typeof stockRaw === 'number' ? stockRaw : parseInt(String(stockRaw ?? '0'), 10);
+  // Leer stock de forma segura
+  const stock = typeof pizza.stock === 'number' ? pizza.stock : parseInt(String(pizza.stock ?? '0'), 10);
 
-  const isOutOfStock = stock <= 0;
-  const isLowStock = stock > 0 && stock <= 3; // umbral visual opcional
+  // Calcular cuántas unidades ya están en el carrito
+  const inCartQuantity = items
+    .filter(item => item.id === pizza.id)
+    .reduce((total, item) => total + item.quantity, 0);
+
+  const availableStock = stock - inCartQuantity;
+  const isOutOfStock = availableStock <= 0;
+  const isLowStock = availableStock > 0 && availableStock <= 3;
 
   const handleAdd = () => {
-    if (isOutOfStock) return; // protección extra por si acaso
+    if (isOutOfStock) return;
+    
+    // Verificar si aún hay stock disponible considerando lo que ya está en el carrito
+    if (inCartQuantity >= stock) {
+      return;
+    }
+    
     addItem(pizza);
   };
 
@@ -44,9 +56,10 @@ export default function PizzaCard({ pizza }: PizzaCardProps) {
               className={`rounded-full px-3 py-1 text-xs font-medium ${
                 isLowStock ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'
               }`}
-              title={`${stock} disponibles`}
+              title={`${availableStock} disponibles (${inCartQuantity} en carrito)`}
             >
-              Disponible: {stock}
+              Disponible: {availableStock}
+              {inCartQuantity > 0 && ` (${inCartQuantity} en carrito)`}
             </span>
           )}
         </div>

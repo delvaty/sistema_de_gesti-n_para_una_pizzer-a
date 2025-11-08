@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react';
 import { useCartStore, Addon } from '../store/cartStore';
 import { Button } from '../components/ui/Button';
@@ -8,6 +7,19 @@ import { useAuth } from '../hooks/useAuth';
 import { supabase } from '../lib/supabaseClient';
 import { TablesInsert } from '../types/supabase';
 
+// Tipo para la validación de stock
+interface StockValidationItem {
+  id: string;
+  name: string;
+  available: number;
+  requested: number;
+}
+
+interface PizzaStock {
+  id: string;
+  stock: number;
+}
+
 export default function Cart() {
   const {
     items,
@@ -16,7 +28,6 @@ export default function Cart() {
     removeItem,
     clearCart,
     toggleAddonForItem,
-    /* setAddonsForItem, */
   } = useCartStore();
 
   const total = totalPrice();
@@ -26,22 +37,135 @@ export default function Cart() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [availableAddons, setAvailableAddons] = useState<Addon[]>([]);
-  const [openAddonsFor, setOpenAddonsFor] = useState<string | null>(null); // CartItemId del panel abierto
+  const [openAddonsFor, setOpenAddonsFor] = useState<string | null>(null);
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [showAddressInput, setShowAddressInput] = useState(false);
+  const [stockValidation, setStockValidation] = useState<StockValidationItem[]>([]);
+  const [pizzasStock, setPizzasStock] = useState<PizzaStock[]>([]);
 
-  // Fetch addons
+  // Fetch addons y stock de pizzas
   useEffect(() => {
-    const fetchAddons = async () => {
-      const { data, error } = await supabase.from('addons').select('*');
-      if (error) {
-        console.error('Error fetching addons', error);
-        return;
+    const fetchData = async () => {
+      // Fetch addons
+      const { data: addonsData, error: addonsError } = await supabase.from('addons').select('*');
+      if (addonsError) {
+        console.error('Error fetching addons', addonsError);
+      } else {
+        setAvailableAddons((addonsData ?? []) as Addon[]);
       }
-      setAvailableAddons((data ?? []) as Addon[]);
+
+      // Fetch stock de pizzas en el carrito
+      if (items.length > 0) {
+        const pizzaIds = items.map(item => item.id);
+        const { data: pizzasData, error: pizzasError } = await supabase
+          .from('pizzas')
+          .select('id, stock')
+          .in('id', pizzaIds);
+
+        if (pizzasError) {
+          console.error('Error fetching pizzas stock:', pizzasError);
+        } else if (pizzasData) {
+          setPizzasStock(pizzasData.map(p => ({
+            id: p.id,
+            stock: typeof p.stock === 'number' ? p.stock : parseInt(String(p.stock ?? '0'), 10)
+          })));
+        }
+      }
     };
-    fetchAddons();
-  }, []);
+    
+    fetchData();
+  }, [items]);
+
+  // Función para obtener el stock disponible de una pizza
+  const getAvailableStock = (pizzaId: string): number => {
+    const pizzaStock = pizzasStock.find(p => p.id === pizzaId);
+    return pizzaStock ? pizzaStock.stock : 0;
+  };
+
+  // Función para obtener la cantidad en carrito de una pizza
+  const getQuantityInCart = (pizzaId: string): number => {
+    return items
+      .filter(item => item.id === pizzaId)
+      .reduce((total, item) => total + item.quantity, 0);
+  };
+
+  // Función para verificar si se puede incrementar la cantidad
+  const canIncrementQuantity = (pizzaId: string): boolean => {
+    const availableStock = getAvailableStock(pizzaId);
+    const totalInCart = getQuantityInCart(pizzaId);
+    
+    // Verificar si al incrementar superaría el stock disponible
+    return (totalInCart + 1) <= availableStock;
+  };
+
+  // Función para manejar el incremento de cantidad
+  const handleIncrement = (cartItemId: string, pizzaId: string, currentQuantity: number) => {
+    if (canIncrementQuantity(pizzaId, )) {
+      updateQuantity(cartItemId, currentQuantity + 1);
+    }
+  };
+
+  // Función para verificar stock antes del checkout
+  const checkStock = async (): Promise<boolean> => {
+    try {
+      // Obtener IDs de pizzas en el carrito
+      const pizzaIds = items.map(item => item.id);
+      
+      if (pizzaIds.length === 0) return true;
+
+      // Consultar stock actual de las pizzas
+      const { data: pizzas, error } = await supabase
+        .from('pizzas')
+        .select('id, name, stock')
+        .in('id', pizzaIds);
+
+      if (error) {
+        console.error('Error fetching pizzas:', error);
+        throw error;
+      }
+
+      if (!pizzas) {
+        console.error('No pizzas data returned');
+        return false;
+      }
+
+      const validationResults: StockValidationItem[] = [];
+      let hasInsufficientStock = false;
+
+      // Verificar cada item del carrito
+      for (const cartItem of items) {
+        const pizza = pizzas.find(p => p.id === cartItem.id);
+        if (!pizza) {
+          console.warn(`Pizza not found: ${cartItem.id}`);
+          continue;
+        }
+
+        // Asegurarnos de que stock es un número
+        const availableStock = typeof pizza.stock === 'number' 
+          ? pizza.stock 
+          : parseInt(String(pizza.stock ?? '0'), 10);
+        
+        const requestedQuantity = cartItem.quantity;
+
+        if (requestedQuantity > availableStock) {
+          hasInsufficientStock = true;
+          validationResults.push({
+            id: cartItem.id,
+            name: cartItem.name,
+            available: availableStock,
+            requested: requestedQuantity
+          });
+        }
+      }
+
+      setStockValidation(validationResults);
+      return !hasInsufficientStock;
+    } catch (err) {
+      console.error('Error checking stock:', err);
+      setError('Error al verificar disponibilidad de productos');
+      return false;
+    }
+  };
 
   const handleCheckout = async () => {
     if (!user) {
@@ -58,19 +182,21 @@ export default function Cart() {
     setError(null);
 
     try {
-      // 1️⃣ Crear la orden
-      // const orderData: TablesInsert<'orders'> = {
-      //   user_id: user.id,
-      //   total_price: total,
-      //   delivery_address: deliveryAddress,
-      // };
+      // 1️⃣ Verificar stock antes de proceder
+      const hasEnoughStock = await checkStock();
+      if (!hasEnoughStock) {
+        setError('Algunos productos no tienen suficiente stock disponible');
+        setLoading(false);
+        return;
+      }
+
+      // 2️⃣ Crear la orden
       const orderData: TablesInsert<'orders'> = {
         user_id: user.id,
         total_price: total,
         delivery_address: deliveryAddress,
-        delivery_time: new Date().toISOString(), // <- ⚡ obligatorio
+        delivery_time: new Date().toISOString(),
       };
-
 
       const { data: newOrder, error: orderError } = await supabase
         .from('orders')
@@ -80,8 +206,41 @@ export default function Cart() {
 
       if (orderError) throw orderError;
 
-      // 2️⃣ Insertar items del carrito
+      // 3️⃣ Insertar items del carrito y actualizar stock
       for (const item of items) {
+        // Obtener stock actual
+        const { data: pizza, error: pizzaError } = await supabase
+          .from('pizzas')
+          .select('stock')
+          .eq('id', item.id)
+          .single();
+
+        if (pizzaError) throw pizzaError;
+
+        if (!pizza) {
+          throw new Error(`Pizza ${item.id} not found`);
+        }
+
+        // Asegurarnos de que stock es un número
+        const currentStock = typeof pizza.stock === 'number' 
+          ? pizza.stock 
+          : parseInt(String(pizza.stock ?? '0'), 10);
+        
+        const newStock = currentStock - item.quantity;
+
+        if (newStock < 0) {
+          throw new Error(`Stock insuficiente para ${item.name}`);
+        }
+
+        // Actualizar stock en la base de datos
+        const { error: updateError } = await supabase
+          .from('pizzas')
+          .update({ stock: newStock })
+          .eq('id', item.id);
+
+        if (updateError) throw updateError;
+
+        // Insertar order item
         const orderItem = {
           order_id: newOrder.id,
           pizza_id: item.id,
@@ -97,7 +256,7 @@ export default function Cart() {
 
         if (orderItemError) throw orderItemError;
 
-        // 3️⃣ Insertar addons si existen
+        // 4️⃣ Insertar addons si existen
         if (item.addons && item.addons.length > 0) {
           const addonsRows = item.addons.map((a) => ({
             order_item_id: insertedOrderItem.id,
@@ -110,12 +269,12 @@ export default function Cart() {
         }
       }
 
-      // 4️⃣ Limpiar carrito y redirigir
+      // 5️⃣ Limpiar carrito y redirigir
       clearCart();
       navigate('/orders');
     } catch (err: unknown) {
       console.error('Checkout error:', err);
-      setError('No se pudo procesar el pedido. Intenta nuevamente.');
+      setError(err instanceof Error ? err.message : 'No se pudo procesar el pedido. Intenta nuevamente.');
     } finally {
       setLoading(false);
     }
@@ -143,10 +302,29 @@ export default function Cart() {
     <div className="container mx-auto max-w-4xl px-4 py-16">
       <h1 className="font-serif text-4xl font-bold">Tu Carrito</h1>
 
+      {/* Mostrar errores de stock */}
+      {stockValidation.length > 0 && (
+        <div className="mt-4 rounded-md bg-red-50 p-4 border border-red-200">
+          <h3 className="font-medium text-red-800">Problemas de stock:</h3>
+          <ul className="mt-2 list-disc list-inside text-red-700">
+            {stockValidation.map((item) => (
+              <li key={item.id}>
+                <strong>{item.name}</strong>: Solicitado {item.requested}, Disponible {item.available}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-red-600 text-sm">
+            Por favor ajusta las cantidades antes de proceder al pago.
+          </p>
+        </div>
+      )}
+
       <div className="mt-8 flow-root">
         <ul role="list" className="-my-6 divide-y divide-border">
           {items.map((item) => {
             const addonsSum = item.addons.reduce((s, a) => s + (a.price ?? 0), 0);
+            const canIncrement = canIncrementQuantity(item.id);
+            
             return (
               <li key={item.cartItemId} className="flex py-6">
                 <div className="h-24 w-24 flex-shrink-0 overflow-hidden rounded-md border border-border">
@@ -170,6 +348,7 @@ export default function Cart() {
                         size="icon"
                         variant="outline"
                         onClick={() => updateQuantity(item.cartItemId, item.quantity - 1)}
+                        disabled={item.quantity <= 1}
                       >
                         <Minus className="h-4 w-4" />
                       </Button>
@@ -177,7 +356,9 @@ export default function Cart() {
                       <Button
                         size="icon"
                         variant="outline"
-                        onClick={() => updateQuantity(item.cartItemId, item.quantity + 1)}
+                        onClick={() => handleIncrement(item.cartItemId, item.id, item.quantity)}
+                        disabled={!canIncrement}
+                        title={!canIncrement ? "No hay más cantidad disponible" : "Aumentar cantidad"}
                       >
                         <Plus className="h-4 w-4" />
                       </Button>
@@ -204,6 +385,16 @@ export default function Cart() {
                       <Trash2 className="mr-1 h-4 w-4" />
                       Eliminar
                     </Button>
+                  </div>
+
+                  {/* Información de stock */}
+                  <div className="mt-1 text-xs text-text-secondary">
+                    <span>
+                      Cantidad disponible: {getAvailableStock(item.id)} unidades
+                      {getQuantityInCart(item.id) > item.quantity && (
+                        <span> ({getQuantityInCart(item.id) - item.quantity} en otros items)</span>
+                      )}
+                    </span>
                   </div>
 
                   {/* Panel de agregos */}
@@ -285,7 +476,7 @@ export default function Cart() {
                 size="lg"
                 className="w-full"
                 onClick={handleCheckout}
-                disabled={loading || !deliveryAddress}
+                disabled={loading || !deliveryAddress || stockValidation.length > 0}
               >
                 {loading ? (
                   <>

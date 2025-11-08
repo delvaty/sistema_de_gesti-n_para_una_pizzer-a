@@ -148,6 +148,8 @@ export type Database = {
           image_url: string | null
           name: string
           price: number
+          stock: number // ← AGREGADO
+          image_path: string | null // ← AGREGADO (si existe en tu base de datos)
         }
         Insert: {
           created_at?: string
@@ -156,6 +158,8 @@ export type Database = {
           name: string
           price: number
           image_url?: string | null
+          stock?: number // ← AGREGADO
+          image_path?: string | null // ← AGREGADO (si existe en tu base de datos)
         }
         Update: {
           created_at?: string
@@ -164,6 +168,8 @@ export type Database = {
           image_url?: string | null
           name?: string
           price?: number
+          stock?: number // ← AGREGADO
+          image_path?: string | null // ← AGREGADO (si existe en tu base de datos)
         }
         Relationships: []
       }
@@ -189,6 +195,41 @@ export type Database = {
             columns: ["id"]
             isOneToOne: true
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stock_movements: { // ← AGREGADO si necesitas esta tabla
+        Row: {
+          id: string
+          pizza_id: string
+          change: number
+          reason: string
+          ref_order_id: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          pizza_id: string
+          change: number
+          reason: string
+          ref_order_id?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          pizza_id?: string
+          change?: number
+          reason?: string
+          ref_order_id?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stock_movements_pizza_id_fkey"
+            columns: ["pizza_id"]
+            isOneToOne: false
+            referencedRelation: "pizzas"
             referencedColumns: ["id"]
           },
         ]
