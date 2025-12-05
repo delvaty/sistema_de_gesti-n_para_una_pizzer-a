@@ -12,9 +12,10 @@ export default function SignUp() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('user'); // default 'user'
+  const [role, setRole] = useState('user');
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [passwordStrength, setPasswordStrength] = useState<'débil' | 'media' | 'fuerte' | null>(null);
 
   const navigate = useNavigate();
   const { session } = useAuth();
@@ -25,8 +26,55 @@ export default function SignUp() {
     }
   }, [session, navigate]);
 
+  // Función para evaluar la fortaleza de la contraseña
+  const evaluatePasswordStrength = (password: string) => {
+    if (password.length === 0) {
+      setPasswordStrength(null);
+      return;
+    }
+
+    let score = 0;
+    
+    // Longitud mínima
+    if (password.length >= 8) score++;
+    if (password.length >= 12) score++;
+    
+    // Diversidad de caracteres
+    if (/[A-Z]/.test(password)) score++; // Mayúsculas
+    if (/[a-z]/.test(password)) score++; // Minúsculas
+    if (/[0-9]/.test(password)) score++; // Números
+    if (/[^A-Za-z0-9]/.test(password)) score++; // Símbolos
+    
+    // Determinar nivel de fortaleza
+    if (score <= 2) {
+      setPasswordStrength('débil');
+    } else if (score <= 4) {
+      setPasswordStrength('media');
+    } else {
+      setPasswordStrength('fuerte');
+    }
+  };
+
+  const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newPassword = e.target.value;
+    setPassword(newPassword);
+    evaluatePasswordStrength(newPassword);
+  };
+
+  const isPasswordStrong = () => {
+    if (!passwordStrength) return false;
+    return passwordStrength === 'fuerte';
+  };
+
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Validar contraseña fuerte antes de registrar
+    if (!isPasswordStrong()) {
+      setError('Por favor, usa una contraseña más segura para registrarte.');
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -38,7 +86,7 @@ export default function SignUp() {
         options: {
           data: {
             full_name: fullName,
-            role: role, // seguirá enviándose, pero deberías reforzar en servidor que role resultante sea 'user'
+            role: role,
           },
         },
       });
@@ -58,6 +106,39 @@ export default function SignUp() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Función para obtener el color del indicador de fortaleza
+  const getStrengthColor = () => {
+    switch (passwordStrength) {
+      case 'débil': return 'bg-red-500';
+      case 'media': return 'bg-yellow-500';
+      case 'fuerte': return 'bg-green-500';
+      default: return 'bg-gray-300';
+    }
+  };
+
+  // Función para obtener el texto de recomendaciones
+  const getPasswordRecommendations = () => {
+    const recommendations = [];
+    
+    if (password.length < 8) {
+      recommendations.push('Al menos 8 caracteres');
+    }
+    if (!/[A-Z]/.test(password)) {
+      recommendations.push('Una letra mayúscula');
+    }
+    if (!/[a-z]/.test(password)) {
+      recommendations.push('Una letra minúscula');
+    }
+    if (!/[0-9]/.test(password)) {
+      recommendations.push('Un número');
+    }
+    if (!/[^A-Za-z0-9]/.test(password)) {
+      recommendations.push('Un símbolo especial');
+    }
+    
+    return recommendations;
   };
 
   return (
@@ -94,7 +175,7 @@ export default function SignUp() {
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
-            <div>
+            <div className="space-y-2">
               <Input
                 id="password"
                 name="password"
@@ -103,11 +184,57 @@ export default function SignUp() {
                 required
                 placeholder="Contraseña"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={handlePasswordChange}
               />
+              
+              {/* Indicador de fortaleza de contraseña */}
+              {password && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-text-secondary">Fortaleza:</span>
+                    <span className={`text-xs font-medium ${
+                      passwordStrength === 'débil' ? 'text-red-500' :
+                      passwordStrength === 'media' ? 'text-yellow-500' :
+                      passwordStrength === 'fuerte' ? 'text-green-500' : 'text-text-secondary'
+                    }`}>
+                      {passwordStrength ? passwordStrength.charAt(0).toUpperCase() + passwordStrength.slice(1) : ''}
+                    </span>
+                  </div>
+                  
+                  {/* Barra de progreso visual */}
+                  <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-300 ${getStrengthColor()}`}
+                      style={{
+                        width: passwordStrength === 'débil' ? '33%' : 
+                               passwordStrength === 'media' ? '66%' : 
+                               passwordStrength === 'fuerte' ? '100%' : '0%'
+                      }}
+                    />
+                  </div>
+                  
+                  {/* Recomendaciones */}
+                  {passwordStrength !== 'fuerte' && password.length > 0 && (
+                    <div className="text-xs text-text-secondary">
+                      <p className="font-medium mb-1">Para una contraseña fuerte:</p>
+                      <ul className="list-disc list-inside space-y-1">
+                        {getPasswordRecommendations().map((rec, index) => (
+                          <li key={index}>{rec}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  
+                  {passwordStrength === 'fuerte' && (
+                    <p className="text-xs text-green-500 font-medium">
+                      ✓ Tu contraseña es segura
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
-            {/* SELECT: solo Cliente y Repartidor. no hay opción 'admin' */}
+            {/* SELECT: solo Cliente y Repartidor */}
             <div>
               <Select onValueChange={setRole} defaultValue={role}>
                 <SelectTrigger>
@@ -116,7 +243,6 @@ export default function SignUp() {
                 <SelectContent>
                   <SelectItem value="user">Cliente</SelectItem>
                   <SelectItem value="driver">Repartidor</SelectItem>
-                  {/* Admin eliminado */}
                 </SelectContent>
               </Select>
             </div>
@@ -126,7 +252,12 @@ export default function SignUp() {
           {message && <p className="text-sm text-green-500">{message}</p>}
 
           <div>
-            <Button type="submit" className="w-full" size="lg" disabled={loading}>
+            <Button 
+              type="submit" 
+              className="w-full" 
+              size="lg" 
+              disabled={loading || (password.length > 0 && !isPasswordStrong())}
+            >
               {loading && <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />}
               {loading ? 'Creando cuenta...' : 'Registrarse'}
             </Button>
